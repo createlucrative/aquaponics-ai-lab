@@ -71,13 +71,16 @@ function App() {
       .catch((err) => console.error('Error fetching plant list:', err));
   }, []);
 
-  // Whenever the mode or selected plant changes, refresh sensors, AI, recipes and comparison data
+  // Whenever the mode or selected plant changes, refresh sensors and AI recommendations.
+  // In demo mode the backend will return the optimal configuration when a plant name
+  // is provided; otherwise it returns random simulated values. In real mode sensor
+  // values are placeholders until physical hardware is integrated.
   useEffect(() => {
-    // Determine sensor URL. In demo mode include selected plant to fetch its optimal config.
-    const sensorUrl =
-      mode === 'demo' && selectedPlant
-        ? `https://aquaponics-ai-lab.onrender.com/sensors?plant=${encodeURIComponent(selectedPlant)}`
-        : 'https://aquaponics-ai-lab.onrender.com/sensors';
+    // Build sensor URL with optional plant query param when in demo mode
+    let sensorUrl = 'https://aquaponics-ai-lab.onrender.com/sensors';
+    if (mode === 'demo' && selectedPlant) {
+      sensorUrl += `?plant=${encodeURIComponent(selectedPlant)}`;
+    }
     // Fetch sensor data
     fetch(sensorUrl)
       .then((res) => res.json())
@@ -89,28 +92,38 @@ function App() {
       .then((res) => res.json())
       .then((data) => setAi(data))
       .catch((error) => console.error('Error fetching AI recommendations:', error));
+  }, [mode, selectedPlant]);
 
-    // Fetch recipes
+  // Whenever the mode changes, refresh recipes, comparison data, and plant list. These
+  // datasets are independent of the currently selected plant, so they don't need
+  // to be re-fetched on every plant selection.
+  useEffect(() => {
+    // Fetch recipes (optimized configurations)
     fetch('https://aquaponics-ai-lab.onrender.com/recipes')
       .then((res) => res.json())
       .then((data) => setRecipes(data))
       .catch((error) => console.error('Error fetching recipes:', error));
 
-    // Fetch traditional vs aquaponics comparison
+    // Fetch traditional vs aquaponics comparison data
     fetch('https://aquaponics-ai-lab.onrender.com/traditional_vs_aquaponics')
       .then((res) => res.json())
       .then((data) => setComparison(data))
       .catch((error) => console.error('Error fetching comparison data:', error));
 
-    // Refresh plant list when mode changes to capture real recipes if any
+    // Refresh plant list; in real mode this may include user-added plants
     fetch('https://aquaponics-ai-lab.onrender.com/plants')
       .then((res) => res.json())
       .then((data) => {
         setPlants(data);
-        if (data && data.length > 0) setSelectedPlant(data[0]);
+        // If there is no currently selected plant or the current selection is
+        // no longer in the list (e.g., switching from real to demo), pick the first.
+        if (!selectedPlant || !data.includes(selectedPlant)) {
+          if (data && data.length > 0) setSelectedPlant(data[0]);
+        }
       })
       .catch((err) => console.error('Error fetching plant list:', err));
-  }, [mode, selectedPlant]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
 
   // Toggle between demo and real modes
   const toggleMode = async () => {
