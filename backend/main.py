@@ -1,7 +1,20 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import random
+import csv
+import io
+
+"""
+Aquaponics AI backend with demo and real modes.
+
+In demo mode, sensor endpoints return simulated readings and the
+traditional versus aquaponics database is pre-populated with recipes for
+10 of the most profitable microgreens based on typical growth times and
+sizes【586515149730041†L134-L149】. Real mode acts as a placeholder for
+future integration with physical sensors and storage; recipes can be
+added via the POST /recipes endpoint once optimisation is complete.
+"""
 
 app = FastAPI()
 
@@ -19,6 +32,244 @@ MODE = "demo"
 
 class ModeRequest(BaseModel):
     mode: str
+
+class Recipe(BaseModel):
+    plant: str
+    optimal_config: dict
+    traditional_time_days: int
+    aquaponics_time_days: int
+    traditional_size_cm: float
+    aquaponics_size_cm: float
+
+# ---------------------------------------------------------------------------
+# Demo database of optimized runs
+#
+# The demo mode includes a pre-populated list of recipes for the 10 most
+# profitable microgreens grown in aquaponics. Each recipe contains the plant
+# name, an "optimal" configuration for the aquaponics system, and a
+# comparison of traditional (soil-based) growth metrics versus aquaponics
+# metrics. These values are rough estimates informed by publicly available
+# reports on microgreen growth and profitability【586515149730041†L134-L149】.
+#
+# In demo mode the system pretends that optimisation has already been achieved
+# and returns these records when the user browses the database or exports data.
+# ---------------------------------------------------------------------------
+
+demo_recipes = [
+    {
+        "plant": "Radish",
+        "optimal_config": {
+            "co2_ppm": 600,
+            "air_temp_celsius": 22,
+            "humidity_percent": 60,
+            "light_intensity_lux": 500,
+            "pH": 6.5,
+            "water_temp_celsius": 22,
+            "water_flow_rate_lpm": 2.0,
+            "audio_frequency_hz": 1000,
+            "audio_decibels_db": 60,
+            "light_cycle_hours": 12,
+            "light_brightness_percent": 80,
+            "light_pulse_freq_hz": 1.0,
+        },
+        "traditional_time_days": 12,
+        "aquaponics_time_days": 7,
+        "traditional_size_cm": 6.0,
+        "aquaponics_size_cm": 8.0,
+    },
+    {
+        "plant": "Sunflower",
+        "optimal_config": {
+            "co2_ppm": 600,
+            "air_temp_celsius": 23,
+            "humidity_percent": 55,
+            "light_intensity_lux": 550,
+            "pH": 6.5,
+            "water_temp_celsius": 22,
+            "water_flow_rate_lpm": 2.5,
+            "audio_frequency_hz": 800,
+            "audio_decibels_db": 55,
+            "light_cycle_hours": 14,
+            "light_brightness_percent": 85,
+            "light_pulse_freq_hz": 1.2,
+        },
+        "traditional_time_days": 14,
+        "aquaponics_time_days": 9,
+        "traditional_size_cm": 10.0,
+        "aquaponics_size_cm": 14.0,
+    },
+    {
+        "plant": "Pea Shoots",
+        "optimal_config": {
+            "co2_ppm": 600,
+            "air_temp_celsius": 21,
+            "humidity_percent": 60,
+            "light_intensity_lux": 450,
+            "pH": 6.6,
+            "water_temp_celsius": 21,
+            "water_flow_rate_lpm": 2.0,
+            "audio_frequency_hz": 900,
+            "audio_decibels_db": 55,
+            "light_cycle_hours": 12,
+            "light_brightness_percent": 75,
+            "light_pulse_freq_hz": 1.0,
+        },
+        "traditional_time_days": 14,
+        "aquaponics_time_days": 11,
+        "traditional_size_cm": 10.0,
+        "aquaponics_size_cm": 12.0,
+    },
+    {
+        "plant": "Broccoli",
+        "optimal_config": {
+            "co2_ppm": 600,
+            "air_temp_celsius": 22,
+            "humidity_percent": 60,
+            "light_intensity_lux": 500,
+            "pH": 6.5,
+            "water_temp_celsius": 22,
+            "water_flow_rate_lpm": 2.0,
+            "audio_frequency_hz": 1000,
+            "audio_decibels_db": 60,
+            "light_cycle_hours": 12,
+            "light_brightness_percent": 80,
+            "light_pulse_freq_hz": 1.0,
+        },
+        "traditional_time_days": 11,
+        "aquaponics_time_days": 8,
+        "traditional_size_cm": 5.0,
+        "aquaponics_size_cm": 7.0,
+    },
+    {
+        "plant": "Cilantro",
+        "optimal_config": {
+            "co2_ppm": 650,
+            "air_temp_celsius": 21,
+            "humidity_percent": 65,
+            "light_intensity_lux": 480,
+            "pH": 6.4,
+            "water_temp_celsius": 22,
+            "water_flow_rate_lpm": 1.8,
+            "audio_frequency_hz": 900,
+            "audio_decibels_db": 50,
+            "light_cycle_hours": 12,
+            "light_brightness_percent": 75,
+            "light_pulse_freq_hz": 1.0,
+        },
+        "traditional_time_days": 21,
+        "aquaponics_time_days": 17,
+        "traditional_size_cm": 4.0,
+        "aquaponics_size_cm": 5.0,
+    },
+    {
+        "plant": "Basil",
+        "optimal_config": {
+            "co2_ppm": 650,
+            "air_temp_celsius": 24,
+            "humidity_percent": 55,
+            "light_intensity_lux": 550,
+            "pH": 6.2,
+            "water_temp_celsius": 23,
+            "water_flow_rate_lpm": 2.2,
+            "audio_frequency_hz": 1000,
+            "audio_decibels_db": 60,
+            "light_cycle_hours": 14,
+            "light_brightness_percent": 85,
+            "light_pulse_freq_hz": 1.0,
+        },
+        "traditional_time_days": 20,
+        "aquaponics_time_days": 18,
+        "traditional_size_cm": 6.0,
+        "aquaponics_size_cm": 7.0,
+    },
+    {
+        "plant": "Kale",
+        "optimal_config": {
+            "co2_ppm": 600,
+            "air_temp_celsius": 21,
+            "humidity_percent": 60,
+            "light_intensity_lux": 480,
+            "pH": 6.5,
+            "water_temp_celsius": 22,
+            "water_flow_rate_lpm": 2.0,
+            "audio_frequency_hz": 950,
+            "audio_decibels_db": 55,
+            "light_cycle_hours": 12,
+            "light_brightness_percent": 75,
+            "light_pulse_freq_hz": 1.0,
+        },
+        "traditional_time_days": 14,
+        "aquaponics_time_days": 10,
+        "traditional_size_cm": 4.5,
+        "aquaponics_size_cm": 5.5,
+    },
+    {
+        "plant": "Mustard",
+        "optimal_config": {
+            "co2_ppm": 600,
+            "air_temp_celsius": 22,
+            "humidity_percent": 60,
+            "light_intensity_lux": 500,
+            "pH": 6.5,
+            "water_temp_celsius": 22,
+            "water_flow_rate_lpm": 2.0,
+            "audio_frequency_hz": 1000,
+            "audio_decibels_db": 60,
+            "light_cycle_hours": 12,
+            "light_brightness_percent": 80,
+            "light_pulse_freq_hz": 1.0,
+        },
+        "traditional_time_days": 14,
+        "aquaponics_time_days": 12,
+        "traditional_size_cm": 4.0,
+        "aquaponics_size_cm": 5.0,
+    },
+    {
+        "plant": "Arugula",
+        "optimal_config": {
+            "co2_ppm": 600,
+            "air_temp_celsius": 21,
+            "humidity_percent": 60,
+            "light_intensity_lux": 480,
+            "pH": 6.5,
+            "water_temp_celsius": 22,
+            "water_flow_rate_lpm": 2.0,
+            "audio_frequency_hz": 950,
+            "audio_decibels_db": 55,
+            "light_cycle_hours": 12,
+            "light_brightness_percent": 75,
+            "light_pulse_freq_hz": 1.0,
+        },
+        "traditional_time_days": 12,
+        "aquaponics_time_days": 10,
+        "traditional_size_cm": 4.0,
+        "aquaponics_size_cm": 5.0,
+    },
+    {
+        "plant": "Cabbage",
+        "optimal_config": {
+            "co2_ppm": 600,
+            "air_temp_celsius": 22,
+            "humidity_percent": 60,
+            "light_intensity_lux": 500,
+            "pH": 6.5,
+            "water_temp_celsius": 22,
+            "water_flow_rate_lpm": 2.0,
+            "audio_frequency_hz": 1000,
+            "audio_decibels_db": 60,
+            "light_cycle_hours": 12,
+            "light_brightness_percent": 80,
+            "light_pulse_freq_hz": 1.0,
+        },
+        "traditional_time_days": 12,
+        "aquaponics_time_days": 10,
+        "traditional_size_cm": 5.0,
+        "aquaponics_size_cm": 6.0,
+    },
+]
+
+# Store recipes for real mode (empty until optimisations complete)
+real_recipes = []
 
 @app.get("/")
 def read_root():
@@ -39,7 +290,6 @@ def set_mode(request: ModeRequest):
 @app.get("/sensors")
 def get_sensors():
     """Return sensor readings. In demo mode returns simulated data; in real mode returns placeholders."""
-    # Define the keys for all sensors we support. This ensures real mode returns a consistent shape
     sensor_keys = {
         "co2_ppm": lambda: round(random.uniform(300, 800), 2),
         "air_temp_celsius": lambda: round(random.uniform(18, 30), 2),
@@ -47,27 +297,22 @@ def get_sensors():
         "light_intensity_lux": lambda: round(random.uniform(200, 1000), 2),
         "pH": lambda: round(random.uniform(6, 8), 2),
         "water_temp_celsius": lambda: round(random.uniform(18, 28), 2),
-        # New sensors with appropriate units
-        "water_flow_rate_lpm": lambda: round(random.uniform(0.5, 5.0), 2),  # liters per minute
-        "audio_frequency_hz": lambda: round(random.uniform(200, 2000), 2),  # frequency in hertz
-        "audio_decibels_db": lambda: round(random.uniform(30, 90), 2),  # sound level in decibels
-        "light_cycle_hours": lambda: round(random.uniform(8, 18), 2),  # hours of light per day
-        "light_brightness_percent": lambda: round(random.uniform(10, 100), 2),  # brightness percentage
-        "light_pulse_freq_hz": lambda: round(random.uniform(0.5, 5.0), 2),  # pulse frequency in hertz
+        "water_flow_rate_lpm": lambda: round(random.uniform(0.5, 5.0), 2),
+        "audio_frequency_hz": lambda: round(random.uniform(200, 2000), 2),
+        "audio_decibels_db": lambda: round(random.uniform(30, 90), 2),
+        "light_cycle_hours": lambda: round(random.uniform(8, 18), 2),
+        "light_brightness_percent": lambda: round(random.uniform(10, 100), 2),
+        "light_pulse_freq_hz": lambda: round(random.uniform(0.5, 5.0), 2),
     }
-
     if MODE == "demo":
-        # Generate simulated readings for each sensor key
         return {k: gen() for k, gen in sensor_keys.items()}
     else:
-        # Return None for each sensor when running in real mode without connected hardware.
         return {k: None for k in sensor_keys}
 
 @app.get("/ai")
 def get_ai_recommendations():
     """Provide AI-driven recommendations. In demo mode returns random suggestions; in real mode placeholders."""
     if MODE == "demo":
-        # Provide recommendations for every sensor parameter. These are simple heuristics chosen at random.
         return {
             "adjust_co2": random.choice(["increase", "decrease", "maintain"]),
             "adjust_air_temp": random.choice(["increase", "decrease", "maintain"]),
@@ -80,29 +325,12 @@ def get_ai_recommendations():
             ]),
             "adjust_pH": random.choice(["raise pH", "lower pH", "maintain"]),
             "adjust_water_temp": random.choice(["increase", "decrease", "maintain"]),
-            # New recommendations corresponding to new sensors
             "adjust_water_flow_rate": random.choice(["increase", "decrease", "maintain"]),
-            "adjust_audio_frequency": random.choice([
-                "increase frequency",
-                "decrease frequency",
-                "maintain",
-            ]),
-            "adjust_audio_decibels": random.choice([
-                "increase volume",
-                "decrease volume",
-                "maintain",
-            ]),
-            "adjust_light_cycle": random.choice([
-                "extend photoperiod",
-                "shorten photoperiod",
-                "maintain",
-            ]),
+            "adjust_audio_frequency": random.choice(["increase frequency", "decrease frequency", "maintain"]),
+            "adjust_audio_decibels": random.choice(["increase volume", "decrease volume", "maintain"]),
+            "adjust_light_cycle": random.choice(["extend photoperiod", "shorten photoperiod", "maintain"]),
             "adjust_light_brightness": random.choice(["increase", "decrease", "maintain"]),
-            "adjust_light_pulse_freq": random.choice([
-                "increase frequency",
-                "decrease frequency",
-                "maintain",
-            ]),
+            "adjust_light_pulse_freq": random.choice(["increase frequency", "decrease frequency", "maintain"]),
         }
     else:
         return {
@@ -119,3 +347,70 @@ def get_ai_recommendations():
             "adjust_light_brightness": None,
             "adjust_light_pulse_freq": None,
         }
+
+@app.get("/plants")
+def get_plants():
+    """Return a list of available plants for the current mode."""
+    if MODE == "demo":
+        return [r["plant"] for r in demo_recipes]
+    else:
+        return [r["plant"] for r in real_recipes]
+
+@app.get("/recipes")
+def get_recipes():
+    """Return all recipe records depending on the current mode."""
+    return demo_recipes if MODE == "demo" else real_recipes
+
+@app.post("/recipes")
+def add_recipe(recipe: Recipe):
+    """Add a recipe record in real mode. Raises an error if called in demo mode."""
+    if MODE != "real":
+        raise HTTPException(status_code=400, detail="Can only add recipes in real mode")
+    real_recipes.append(recipe.dict())
+    return {"status": "added", "count": len(real_recipes)}
+
+@app.get("/recipes/export")
+def export_recipes():
+    """Export the current recipe database as a CSV file suitable for opening in Excel."""
+    data = demo_recipes if MODE == "demo" else real_recipes
+    output = io.StringIO()
+    writer = csv.writer(output)
+    # Write header
+    writer.writerow([
+        "plant",
+        "traditional_time_days",
+        "aquaponics_time_days",
+        "traditional_size_cm",
+        "aquaponics_size_cm",
+    ])
+    for rec in data:
+        writer.writerow([
+            rec["plant"],
+            rec["traditional_time_days"],
+            rec["aquaponics_time_days"],
+            rec["traditional_size_cm"],
+            rec["aquaponics_size_cm"],
+        ])
+    csv_content = output.getvalue()
+    output.close()
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=recipes.csv"},
+    )
+
+@app.get("/traditional_vs_aquaponics")
+def get_traditional_vs_aquaponics():
+    """Return a comparison of traditional versus aquaponics growth metrics for each plant."""
+    data = demo_recipes if MODE == "demo" else real_recipes
+    return [
+        {
+            "plant": rec["plant"],
+            "traditional_time_days": rec["traditional_time_days"],
+            "aquaponics_time_days": rec["aquaponics_time_days"],
+            "traditional_size_cm": rec["traditional_size_cm"],
+            "aquaponics_size_cm": rec["aquaponics_size_cm"],
+        }
+        for rec in data
+    ]
+
