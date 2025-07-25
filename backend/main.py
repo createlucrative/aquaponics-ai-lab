@@ -40,41 +40,51 @@ def set_mode(request: ModeRequest):
 def get_sensors():
     """Return sensor readings. In demo mode returns simulated data; in real mode returns placeholders."""
     if MODE == "demo":
+        # Include units in the key names. For example, CO₂ is measured in parts per million (ppm),
+        # temperatures are in degrees Celsius, humidity in percent, and light intensity in lux.
         return {
-            "co2": round(random.uniform(300, 800), 2),
-            "air_temp": round(random.uniform(18, 30), 2),
-            "humidity": round(random.uniform(30, 70), 2),
-            "light_intensity": round(random.uniform(0, 1000), 2),
+            "co2_ppm": round(random.uniform(300, 800), 2),
+            "air_temp_celsius": round(random.uniform(18, 30), 2),
+            "humidity_percent": round(random.uniform(30, 70), 2),
+            "light_intensity_lux": round(random.uniform(200, 1000), 2),
             "pH": round(random.uniform(6, 8), 2),
-            "water_temp": round(random.uniform(18, 28), 2),
+            "water_temp_celsius": round(random.uniform(18, 28), 2),
         }
     else:
+        # Return None for each sensor when running in real mode without connected hardware.
         return {
-            "co2": None,
-            "air_temp": None,
-            "humidity": None,
-            "light_intensity": None,
+            "co2_ppm": None,
+            "air_temp_celsius": None,
+            "humidity_percent": None,
+            "light_intensity_lux": None,
             "pH": None,
-            "water_temp": None,
+            "water_temp_celsius": None,
         }
 
 @app.get("/ai")
 def get_ai_recommendations():
     """Provide AI-driven recommendations. In demo mode returns random suggestions; in real mode placeholders."""
     if MODE == "demo":
+        # Provide recommendations for every sensor parameter. These are simple heuristics chosen at random.
         return {
             "adjust_co2": random.choice(["increase", "decrease", "maintain"]),
+            "adjust_air_temp": random.choice(["increase", "decrease", "maintain"]),
+            "adjust_humidity": random.choice(["increase", "decrease", "maintain"]),
             "adjust_light": random.choice([
                 "increase intensity",
                 "decrease intensity",
                 "change spectrum",
                 "maintain",
             ]),
-            "adjust_watering": random.choice(["increase flow", "decrease flow", "maintain"]),
+            "adjust_pH": random.choice(["raise pH", "lower pH", "maintain"]),
+            "adjust_water_temp": random.choice(["increase", "decrease", "maintain"]),
         }
     else:
         return {
             "adjust_co2": None,
+            "adjust_air_temp": None,
+            "adjust_humidity": None,
             "adjust_light": None,
-            "adjust_watering": None,
+            "adjust_pH": None,
+            "adjust_water_temp": None,
         }
