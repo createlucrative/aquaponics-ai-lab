@@ -41,13 +41,23 @@ function App() {
     }
   };
 
-  // Format sensor labels with units
+  // Human-friendly sensor labels with units for display
   const formatSensorLabel = (key) => {
-    if (key.endsWith('_ppm')) return key.replace('_ppm', ' (ppm)');
-    if (key.endsWith('_celsius')) return key.replace('_celsius', ' (°C)');
-    if (key.endsWith('_percent')) return key.replace('_percent', ' (%)');
-    if (key.endsWith('_lux')) return key.replace('_lux', ' (lux)');
-    return key;
+    const sensorLabels = {
+      co2_ppm: 'CO₂ (ppm)',
+      air_temp_celsius: 'Air Temp (°C)',
+      humidity_percent: 'Humidity (%)',
+      light_intensity_lux: 'Light Intensity (lux)',
+      pH: 'pH',
+      water_temp_celsius: 'Water Temp (°C)',
+      water_flow_rate_lpm: 'Water Flow Rate (L/min)',
+      audio_frequency_hz: 'Audio Frequency (Hz)',
+      audio_decibels_db: 'Audio Level (dB)',
+      light_cycle_hours: 'Light Cycle (hrs)',
+      light_brightness_percent: 'Light Brightness (%)',
+      light_pulse_freq_hz: 'Light Pulse Freq (Hz)',
+    };
+    return sensorLabels[key] || key;
   };
 
   // Format AI recommendation labels for readability
