@@ -41,6 +41,22 @@ function App() {
     }
   };
 
+  // Format sensor labels with units
+  const formatSensorLabel = (key) => {
+    if (key.endsWith('_ppm')) return key.replace('_ppm', ' (ppm)');
+    if (key.endsWith('_celsius')) return key.replace('_celsius', ' (°C)');
+    if (key.endsWith('_percent')) return key.replace('_percent', ' (%)');
+    if (key.endsWith('_lux')) return key.replace('_lux', ' (lux)');
+    return key;
+  };
+
+  // Format AI recommendation labels for readability
+  const formatRecLabel = (key) => {
+    return key
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, (l) => l.toUpperCase());
+  };
+
   return (
     <div className="App" style={{ padding: '20px', fontFamily: 'Arial, sans-serif' }}>
       <h1>Aquaponics AI Dashboard</h1>
@@ -54,7 +70,7 @@ function App() {
         <ul>
           {Object.entries(sensors).map(([key, value]) => (
             <li key={key}>
-              {key}: {value !== null ? value.toString() : 'N/A'}
+              {formatSensorLabel(key)}: {value !== null ? value.toString() : 'N/A'}
             </li>
           ))}
         </ul>
@@ -67,7 +83,7 @@ function App() {
         <ul>
           {Object.entries(ai).map(([key, value]) => (
             <li key={key}>
-              {key}: {value !== null ? value.toString() : 'N/A'}
+              {formatRecLabel(key)}: {value !== null ? value.toString() : 'N/A'}
             </li>
           ))}
         </ul>
