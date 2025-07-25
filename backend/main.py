@@ -288,8 +288,19 @@ def set_mode(request: ModeRequest):
     return {"mode": MODE}
 
 @app.get("/sensors")
-def get_sensors():
-    """Return sensor readings. In demo mode returns simulated data; in real mode returns placeholders."""
+def get_sensors(plant: str = None):
+    """
+    Return sensor readings.
+
+    In demo mode, if a plant name is provided and a matching recipe exists in
+    the demo database, return the optimal configuration for that plant. This
+    allows the front end to display known optimal units for each selected
+    microgreen rather than random simulated values. If no plant is provided
+    or no recipe is found, random values are returned. In real mode, all
+    sensor values are placeholders (None) until physical sensors are
+    integrated.
+    """
+    # Define ranges for random demo simulation
     sensor_keys = {
         "co2_ppm": lambda: round(random.uniform(300, 800), 2),
         "air_temp_celsius": lambda: round(random.uniform(18, 30), 2),
@@ -304,9 +315,17 @@ def get_sensors():
         "light_brightness_percent": lambda: round(random.uniform(10, 100), 2),
         "light_pulse_freq_hz": lambda: round(random.uniform(0.5, 5.0), 2),
     }
+    # In demo mode, return optimal config if a plant match exists
     if MODE == "demo":
+        if plant:
+            # Find matching recipe (case-insensitive)
+            match = next((r for r in demo_recipes if r["plant"].lower() == plant.lower()), None)
+            if match:
+                return match["optimal_config"]
+        # Otherwise return random simulated values
         return {k: gen() for k, gen in sensor_keys.items()}
     else:
+        # Real mode: return placeholders for now
         return {k: None for k in sensor_keys}
 
 @app.get("/ai")
