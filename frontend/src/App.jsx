@@ -71,10 +71,15 @@ function App() {
       .catch((err) => console.error('Error fetching plant list:', err));
   }, []);
 
-  // Whenever the mode changes, refresh sensors, AI, recipes and comparison data
+  // Whenever the mode or selected plant changes, refresh sensors, AI, recipes and comparison data
   useEffect(() => {
+    // Determine sensor URL. In demo mode include selected plant to fetch its optimal config.
+    const sensorUrl =
+      mode === 'demo' && selectedPlant
+        ? `https://aquaponics-ai-lab.onrender.com/sensors?plant=${encodeURIComponent(selectedPlant)}`
+        : 'https://aquaponics-ai-lab.onrender.com/sensors';
     // Fetch sensor data
-    fetch('https://aquaponics-ai-lab.onrender.com/sensors')
+    fetch(sensorUrl)
       .then((res) => res.json())
       .then((data) => setSensors(data))
       .catch((error) => console.error('Error fetching sensors:', error));
@@ -105,7 +110,7 @@ function App() {
         if (data && data.length > 0) setSelectedPlant(data[0]);
       })
       .catch((err) => console.error('Error fetching plant list:', err));
-  }, [mode]);
+  }, [mode, selectedPlant]);
 
   // Toggle between demo and real modes
   const toggleMode = async () => {
