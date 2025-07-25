@@ -268,8 +268,31 @@ demo_recipes = [
     },
 ]
 
-# Store recipes for real mode (empty until optimisations complete)
+# Store recipes for real mode (empty until optimisation runs complete)
 real_recipes = []
+
+#
+# In real mode, sensor readings will come from physical hardware. We store
+# the most recent readings in this dictionary. A separate controller
+# (e.g. Raspberry Pi or microcontroller) should POST readings to the
+# /sensor/readings endpoint defined below. Each key corresponds to a sensor
+# name and its value is the latest numeric reading. When no data has
+# been received for a key, the sensors endpoint will return None.
+latest_readings: dict[str, float] = {}
+
+# Define a simple Pydantic model for ingesting arbitrary sensor readings.
+class SensorReadings(BaseModel):
+    """
+    Arbitrary dictionary of sensor readings keyed by the sensor name.
+
+    This model allows the API to accept a JSON object with any number of
+    sensors and their latest numeric readings. These values are stored
+    in the global `latest_readings` dictionary when ingested via the
+    /sensor/readings endpoint. Keys should correspond to the sensor
+    identifiers used elsewhere in the application (e.g. 'co2_ppm',
+    'air_temp_celsius').
+    """
+    __root__: dict[str, float]
 
 @app.get("/")
 def read_root():
@@ -325,8 +348,39 @@ def get_sensors(plant: str = None):
         # Otherwise return random simulated values
         return {k: gen() for k, gen in sensor_keys.items()}
     else:
-        # Real mode: return placeholders for now
-        return {k: None for k in sensor_keys}
+        # Real mode: return the latest readings if available. Use None for sensors that
+        # have not yet been reported by the hardware. The keys mirror those used
+        # in the demo simulation to ensure a consistent response shape for the
+        # frontend. As the system grows, additional sensors can be added to
+        # `sensor_keys` without modifying this logic.
+        return {k: latest_readings.get(k) for k in sensor_keys}
+
+
+@app.post("/sensor/readings")
+def ingest_sensor_readings(readings: SensorReadings):
+    """Ingest a batch of sensor readings from physical hardware.
+
+    In real mode, the controller (e.g. Raspberry Pi) should POST a JSON
+    object containing sensor names and their most recent values to this
+    endpoint. Each reading is stored in the `latest_readings` dictionary.
+
+    Example payload:
+
+    {
+      "co2_ppm": 650,
+      "air_temp_celsius": 23.5,
+      "humidity_percent": 58
+    }
+
+    Returns the number of readings ingested. Raises a 400 error if
+    called while in demo mode.
+    """
+    if MODE != "real":
+        raise HTTPException(status_code=400, detail="Can only ingest sensor data in real mode")
+    # Update global latest readings
+    for key, value in readings.__root__.items():
+        latest_readings[key] = value
+    return {"status": "received", "count": len(readings.__root__)}
 
 @app.get("/ai")
 def get_ai_recommendations():
