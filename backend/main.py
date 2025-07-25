@@ -281,18 +281,11 @@ real_recipes = []
 latest_readings: dict[str, float] = {}
 
 # Define a simple Pydantic model for ingesting arbitrary sensor readings.
+# NOTE: Instead of using a Pydantic root model (which requires Pydantic v2's RootModel),
+# we accept sensor readings as a plain dictionary in the ingestion endpoint. This
+# avoids type errors with the `__root__` field under newer Pydantic versions.
 class SensorReadings(BaseModel):
-    """
-    Arbitrary dictionary of sensor readings keyed by the sensor name.
-
-    This model allows the API to accept a JSON object with any number of
-    sensors and their latest numeric readings. These values are stored
-    in the global `latest_readings` dictionary when ingested via the
-    /sensor/readings endpoint. Keys should correspond to the sensor
-    identifiers used elsewhere in the application (e.g. 'co2_ppm',
-    'air_temp_celsius').
-    """
-    __root__: dict[str, float]
+    readings: dict[str, float]
 
 @app.get("/")
 def read_root():
@@ -357,7 +350,7 @@ def get_sensors(plant: str = None):
 
 
 @app.post("/sensor/readings")
-def ingest_sensor_readings(readings: SensorReadings):
+def ingest_sensor_readings(readings: dict[str, float]):
     """Ingest a batch of sensor readings from physical hardware.
 
     In real mode, the controller (e.g. Raspberry Pi) should POST a JSON
@@ -377,10 +370,10 @@ def ingest_sensor_readings(readings: SensorReadings):
     """
     if MODE != "real":
         raise HTTPException(status_code=400, detail="Can only ingest sensor data in real mode")
-    # Update global latest readings
-    for key, value in readings.__root__.items():
+    # readings is already a dict mapping sensor keys to values
+    for key, value in readings.items():
         latest_readings[key] = value
-    return {"status": "received", "count": len(readings.__root__)}
+    return {"status": "received", "count": len(readings)}
 
 @app.get("/ai")
 def get_ai_recommendations():
