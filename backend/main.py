@@ -39,27 +39,29 @@ def set_mode(request: ModeRequest):
 @app.get("/sensors")
 def get_sensors():
     """Return sensor readings. In demo mode returns simulated data; in real mode returns placeholders."""
+    # Define the keys for all sensors we support. This ensures real mode returns a consistent shape
+    sensor_keys = {
+        "co2_ppm": lambda: round(random.uniform(300, 800), 2),
+        "air_temp_celsius": lambda: round(random.uniform(18, 30), 2),
+        "humidity_percent": lambda: round(random.uniform(30, 70), 2),
+        "light_intensity_lux": lambda: round(random.uniform(200, 1000), 2),
+        "pH": lambda: round(random.uniform(6, 8), 2),
+        "water_temp_celsius": lambda: round(random.uniform(18, 28), 2),
+        # New sensors with appropriate units
+        "water_flow_rate_lpm": lambda: round(random.uniform(0.5, 5.0), 2),  # liters per minute
+        "audio_frequency_hz": lambda: round(random.uniform(200, 2000), 2),  # frequency in hertz
+        "audio_decibels_db": lambda: round(random.uniform(30, 90), 2),  # sound level in decibels
+        "light_cycle_hours": lambda: round(random.uniform(8, 18), 2),  # hours of light per day
+        "light_brightness_percent": lambda: round(random.uniform(10, 100), 2),  # brightness percentage
+        "light_pulse_freq_hz": lambda: round(random.uniform(0.5, 5.0), 2),  # pulse frequency in hertz
+    }
+
     if MODE == "demo":
-        # Include units in the key names. For example, CO₂ is measured in parts per million (ppm),
-        # temperatures are in degrees Celsius, humidity in percent, and light intensity in lux.
-        return {
-            "co2_ppm": round(random.uniform(300, 800), 2),
-            "air_temp_celsius": round(random.uniform(18, 30), 2),
-            "humidity_percent": round(random.uniform(30, 70), 2),
-            "light_intensity_lux": round(random.uniform(200, 1000), 2),
-            "pH": round(random.uniform(6, 8), 2),
-            "water_temp_celsius": round(random.uniform(18, 28), 2),
-        }
+        # Generate simulated readings for each sensor key
+        return {k: gen() for k, gen in sensor_keys.items()}
     else:
         # Return None for each sensor when running in real mode without connected hardware.
-        return {
-            "co2_ppm": None,
-            "air_temp_celsius": None,
-            "humidity_percent": None,
-            "light_intensity_lux": None,
-            "pH": None,
-            "water_temp_celsius": None,
-        }
+        return {k: None for k in sensor_keys}
 
 @app.get("/ai")
 def get_ai_recommendations():
@@ -70,7 +72,7 @@ def get_ai_recommendations():
             "adjust_co2": random.choice(["increase", "decrease", "maintain"]),
             "adjust_air_temp": random.choice(["increase", "decrease", "maintain"]),
             "adjust_humidity": random.choice(["increase", "decrease", "maintain"]),
-            "adjust_light": random.choice([
+            "adjust_light_intensity": random.choice([
                 "increase intensity",
                 "decrease intensity",
                 "change spectrum",
@@ -78,13 +80,42 @@ def get_ai_recommendations():
             ]),
             "adjust_pH": random.choice(["raise pH", "lower pH", "maintain"]),
             "adjust_water_temp": random.choice(["increase", "decrease", "maintain"]),
+            # New recommendations corresponding to new sensors
+            "adjust_water_flow_rate": random.choice(["increase", "decrease", "maintain"]),
+            "adjust_audio_frequency": random.choice([
+                "increase frequency",
+                "decrease frequency",
+                "maintain",
+            ]),
+            "adjust_audio_decibels": random.choice([
+                "increase volume",
+                "decrease volume",
+                "maintain",
+            ]),
+            "adjust_light_cycle": random.choice([
+                "extend photoperiod",
+                "shorten photoperiod",
+                "maintain",
+            ]),
+            "adjust_light_brightness": random.choice(["increase", "decrease", "maintain"]),
+            "adjust_light_pulse_freq": random.choice([
+                "increase frequency",
+                "decrease frequency",
+                "maintain",
+            ]),
         }
     else:
         return {
             "adjust_co2": None,
             "adjust_air_temp": None,
             "adjust_humidity": None,
-            "adjust_light": None,
+            "adjust_light_intensity": None,
             "adjust_pH": None,
             "adjust_water_temp": None,
+            "adjust_water_flow_rate": None,
+            "adjust_audio_frequency": None,
+            "adjust_audio_decibels": None,
+            "adjust_light_cycle": None,
+            "adjust_light_brightness": None,
+            "adjust_light_pulse_freq": None,
         }
