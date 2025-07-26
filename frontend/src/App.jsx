@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 /*
  * This component implements a multi‑page dashboard for the Aquaponics AI project.
@@ -317,6 +317,74 @@ function App() {
       console.error('Error updating actuator:', error);
     }
   };
+
+  // Reference to the EventSource for streaming sensor updates
+  const eventSourceRef = useRef(null);
+
+  // When on the dashboard, establish an SSE connection to receive sensor
+  // updates in real time. This complements the fallback polling logic.
+  useEffect(() => {
+    // Only establish SSE when on the dashboard
+    if (activePage !== 'dashboard') {
+      // Close any existing event source when leaving dashboard
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+      return;
+    }
+    // Close any previous SSE connection
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+    }
+    // Construct the stream URL. In demo mode we don't include plant param
+    const streamUrl = 'https://aquaponics-ai-lab.onrender.com/stream/sensors';
+    const es = new EventSource(streamUrl);
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        setSensors(data);
+        // Fetch AI recommendations based on new sensor values
+        fetch('https://aquaponics-ai-lab.onrender.com/ai')
+          .then((res) => res.json())
+          .then((aiData) => setAi(aiData))
+          .catch((err) => console.error('Error fetching AI during stream:', err));
+      } catch (err) {
+        console.error('Error parsing SSE data:', err);
+      }
+    };
+    es.onerror = (err) => {
+      console.error('SSE connection error:', err);
+    };
+    eventSourceRef.current = es;
+    return () => {
+      es.close();
+      eventSourceRef.current = null;
+    };
+  }, [activePage]);
+
+  // When the mode or selectedPlant changes and we are in real mode, update
+  // the backend target configuration. This ensures the automatic control
+  // loop uses the appropriate optimal configuration. We also refresh
+  // sensors and AI once after updating.
+  useEffect(() => {
+    if (mode !== 'real' || !selectedPlant) return;
+    // Post to target-config endpoint
+    fetch('https://aquaponics-ai-lab.onrender.com/target-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plant: selectedPlant }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error('Failed to set target config');
+        return res.json();
+      })
+      .then(() => {
+        // After updating target config, refresh sensors and AI once
+        fetchSensorsAndAi();
+      })
+      .catch((err) => console.error('Error setting target config:', err));
+  }, [mode, selectedPlant]);
 
   // Save manual plant entry (only in real mode). Posts empty recipe to backend
   const handleAddPlant = async () => {
