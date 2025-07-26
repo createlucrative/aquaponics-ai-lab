@@ -306,6 +306,12 @@ actuator_states: dict[str, any] = {
     "cameras": "off",
 }
 
+# Initialise Q-values for a simple reinforcement-learning controller.
+# For each sensor we track three possible actions: -1 (decrease),
+# 0 (maintain) and +1 (increase). The Q-value represents the expected
+# reward (negative absolute error) associated with taking that action.
+q_values: dict[str, dict[int, float]] = {}
+
 # Target configuration used for automatic optimisation in real mode. When
 # optimisation is enabled, the backend will compare incoming sensor
 # readings against this target and adjust actuators accordingly. The
@@ -313,6 +319,35 @@ actuator_states: dict[str, any] = {
 # demo recipe (e.g. Radish). The frontend can update this via the
 # /target-config endpoint by specifying a plant name.
 TARGET_CONFIG = demo_recipes[0]["optimal_config"].copy()
+
+# Helper functions for the simple RL controller
+def choose_action(sensor: str, value: float, target: float) -> int:
+    """Choose an action (-1, 0, or +1) for a given sensor using a greedy policy.
+
+    If no Q-values exist for the sensor, they are initialised to zero.
+    The action with the highest Q-value is returned. In practice this
+    controller favours actions that historically reduced the absolute error
+    between the sensor value and the target.
+    """
+    if sensor not in q_values:
+        q_values[sensor] = {-1: 0.0, 0: 0.0, 1: 0.0}
+    # Select the action with the highest expected reward
+    actions = q_values[sensor]
+    best_action = max(actions, key=actions.get)
+    return best_action
+
+def update_q(sensor: str, action: int, value: float, target: float, lr: float = 0.1):
+    """Update the Q-value for a given sensor and action based on observed reward.
+
+    The reward is defined as the negative absolute error between the
+    current sensor reading and the target. Q-values are updated via
+    incremental gradient descent towards the observed reward.
+    """
+    if sensor not in q_values:
+        q_values[sensor] = {-1: 0.0, 0: 0.0, 1: 0.0}
+    reward = -abs(value - target)
+    current_q = q_values[sensor][action]
+    q_values[sensor][action] = current_q + lr * (reward - current_q)
 
 def auto_adjust_actuators():
     """Automatically adjust actuators based on the latest sensor readings and
@@ -328,48 +363,36 @@ def auto_adjust_actuators():
     # Only adjust in real mode
     if MODE != "real":
         return
-    # CO2 control: open valve if below target
-    co2_target = TARGET_CONFIG.get("co2_ppm")
-    co2_value = latest_readings.get("co2_ppm")
-    if co2_target is not None and co2_value is not None:
-        actuator_states["co2_valve"] = "on" if co2_value < co2_target else "off"
-    # Air temperature: use heaters and fans
-    temp_target = TARGET_CONFIG.get("air_temp_celsius")
-    temp_value = latest_readings.get("air_temp_celsius")
-    if temp_target is not None and temp_value is not None:
-        if temp_value < temp_target - 1:
-            actuator_states["heaters"] = "on"
-            actuator_states["fans"] = 0
-        elif temp_value > temp_target + 1:
-            actuator_states["heaters"] = "off"
-            actuator_states["fans"] = 50  # medium fan speed
-        else:
-            actuator_states["heaters"] = "off"
-            actuator_states["fans"] = 0
-    # Humidity: increase airflow if above target to reduce humidity
-    humidity_target = TARGET_CONFIG.get("humidity_percent")
-    humidity_value = latest_readings.get("humidity_percent")
-    if humidity_target is not None and humidity_value is not None:
-        if humidity_value > humidity_target + 5:
-            actuator_states["fans"] = max(actuator_states.get("fans", 0), 75)
-        elif humidity_value < humidity_target - 5:
-            # minimal fan usage; heaters could also impact humidity
-            actuator_states["fans"] = min(actuator_states.get("fans", 0), 25)
-    # Light intensity: set grow lights brightness
-    light_target = TARGET_CONFIG.get("light_brightness_percent")
-    if light_target is not None:
-        actuator_states["grow_lights"] = light_target
-    # Water flow: turn pump on if below target
-    flow_target = TARGET_CONFIG.get("water_flow_rate_lpm")
-    flow_value = latest_readings.get("water_flow_rate_lpm")
-    if flow_target is not None and flow_value is not None:
-        actuator_states["water_pump"] = "on" if flow_value < flow_target else "off"
-    # Audio: adjust audio transducers volume
-    audio_target = TARGET_CONFIG.get("audio_decibels_db")
-    if audio_target is not None:
-        actuator_states["audio_transducers"] = audio_target
-    # Light pulse frequency and cycle are not directly adjustable here but
-    # could be implemented similarly by controlling programmable drivers.
+    # Mapping of sensor keys to actuator update logic. Each value is a
+    # callable that takes an action (-1 decrease, 0 maintain, 1 increase)
+    # and performs the appropriate actuator adjustments. If a sensor or
+    # target value is missing, the mapping is skipped.
+    mappings = {
+        "co2_ppm": lambda a: actuator_states.__setitem__("co2_valve", "on" if a == 1 else "off"),
+        "air_temp_celsius": lambda a: (
+            actuator_states.__setitem__("heaters", "on" if a == 1 else "off"),
+            actuator_states.__setitem__("fans", 50 if a == -1 else 0),
+        ),
+        "humidity_percent": lambda a: actuator_states.__setitem__("fans", 75 if a == 1 else (25 if a == -1 else actuator_states.get("fans", 0))),
+        "water_flow_rate_lpm": lambda a: actuator_states.__setitem__("water_pump", "on" if a == 1 else "off"),
+        "audio_decibels_db": lambda a: actuator_states.__setitem__("audio_transducers", TARGET_CONFIG.get("audio_decibels_db", 0)),
+        "light_brightness_percent": lambda a: actuator_states.__setitem__("grow_lights", TARGET_CONFIG.get("light_brightness_percent", 0)),
+    }
+    for sensor_key, apply_action in mappings.items():
+        target = TARGET_CONFIG.get(sensor_key)
+        value = latest_readings.get(sensor_key)
+        if target is None or value is None:
+            continue
+        # Choose an action based on current Q-values
+        action = choose_action(sensor_key, value, target)
+        # Apply the action to the associated actuator(s)
+        apply_action(action)
+        # Update the Q-values using the observed reward
+        update_q(sensor_key, action, value, target)
+
+    # Note: light cycle hours, light pulse frequency and other parameters
+    # may require scheduling or more complex control logic. These can
+    # be integrated into the mapping above as needed.
 
 
 # Define a simple Pydantic model for ingesting arbitrary sensor readings.
@@ -713,6 +736,40 @@ def get_sensor_history(limit: int = 100):
     limit = max(1, min(limit, len(history_readings)))
     # Return the last `limit` entries
     return history_readings[-limit:]
+
+@app.get("/vision")
+def get_vision(plant: str | None = None):
+    """Return plant health metrics derived from camera analysis.
+
+    In demo mode this endpoint returns a plausible plant size (in cm)
+    and a colour index (0–1) representing leaf greenness for the selected
+    plant. If a plant name is provided and exists in the demo database,
+    its aquaponics_size_cm value is used; otherwise the first demo
+    recipe's size is used. In real mode this endpoint returns values
+    from the latest_readings dictionary, which are expected to be
+    provided by an external vision system via the /sensor/readings
+    endpoint. If no such values exist, None is returned for each key.
+    """
+    if MODE == "demo":
+        # Use known optimal size for the specified plant if available
+        if plant:
+            match = next((r for r in demo_recipes if r["plant"].lower() == plant.lower()), None)
+            if match:
+                return {
+                    "plant_size_cm": match["aquaponics_size_cm"],
+                    "plant_color_index": 0.8,
+                }
+        # Default to first recipe's size
+        rec = demo_recipes[0]
+        return {
+            "plant_size_cm": rec["aquaponics_size_cm"],
+            "plant_color_index": 0.8,
+        }
+    # Real mode: return vision metrics from latest readings
+    return {
+        "plant_size_cm": latest_readings.get("plant_size_cm"),
+        "plant_color_index": latest_readings.get("plant_color_index"),
+    }
 
 @app.get("/actuators")
 def get_all_actuators():
