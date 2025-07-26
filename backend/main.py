@@ -280,6 +280,29 @@ real_recipes = []
 # been received for a key, the sensors endpoint will return None.
 latest_readings: dict[str, float] = {}
 
+# A rolling log of sensor readings in real mode. Each entry is a dict with
+# a timestamp and the readings ingested at that moment. This is used to
+# provide historical data to the frontend for plotting and analysis. When
+# the log grows beyond a reasonable size (e.g. 1000 entries) the oldest
+# entries are dropped.
+history_readings: list[dict] = []
+
+# Track the state of actuators in real mode. Each key corresponds to
+# a controllable device in the aquaponics system. Values are simple
+# strings or numbers representing the device's current state. For example,
+# 'co2_valve': 'on' or 'off', 'grow_lights': 75 (percent brightness).
+actuator_states: dict[str, any] = {
+    "co2_valve": "off",
+    "grow_lights": 0,  # percent brightness 0-100
+    "water_pump": "off",
+    "drip_valves": "off",
+    "fans": 0,  # percent speed 0-100
+    "heaters": "off",
+    "aerators": "off",
+    "audio_transducers": 0,  # volume 0-100
+    "cameras": "off",
+}
+
 # Define a simple Pydantic model for ingesting arbitrary sensor readings.
 # NOTE: Instead of using a Pydantic root model (which requires Pydantic v2's RootModel),
 # we accept sensor readings as a plain dictionary in the ingestion endpoint. This
@@ -356,6 +379,8 @@ def ingest_sensor_readings(readings: dict[str, float]):
     In real mode, the controller (e.g. Raspberry Pi) should POST a JSON
     object containing sensor names and their most recent values to this
     endpoint. Each reading is stored in the `latest_readings` dictionary.
+    Additionally, a timestamped snapshot of the readings is appended to
+    `history_readings` so that the frontend can display historical trends.
 
     Example payload:
 
@@ -370,9 +395,18 @@ def ingest_sensor_readings(readings: dict[str, float]):
     """
     if MODE != "real":
         raise HTTPException(status_code=400, detail="Can only ingest sensor data in real mode")
-    # readings is already a dict mapping sensor keys to values
+    # Update the latest readings
     for key, value in readings.items():
         latest_readings[key] = value
+    # Append a timestamped entry to the history log
+    from datetime import datetime
+    history_readings.append({
+        "timestamp": datetime.utcnow().isoformat(),
+        "readings": readings.copy(),
+    })
+    # Keep history from growing indefinitely
+    if len(history_readings) > 1000:
+        history_readings.pop(0)
     return {"status": "received", "count": len(readings)}
 
 @app.get("/ai")
@@ -479,4 +513,75 @@ def get_traditional_vs_aquaponics():
         }
         for rec in data
     ]
+
+# ---------------------------------------------------------------------------
+# History and actuator endpoints
+#
+# The following endpoints provide additional functionality for the frontend.
+# /sensors/history returns a limited number of recent sensor readings in real
+# mode. /actuators and /actuators/{device} allow the frontend to query and
+# set the state of hardware devices. Actuator control is only permitted in
+# real mode to avoid accidentally toggling devices during demonstration.
+# ---------------------------------------------------------------------------
+
+@app.get("/sensors/history")
+def get_sensor_history(limit: int = 100):
+    """Return the most recent sensor readings.
+
+    The `limit` query parameter specifies how many history entries to return.
+    The default is 100. If called in demo mode or no history exists, an
+    empty list is returned. Each entry includes a timestamp and a dictionary
+    of sensor readings.
+    """
+    if MODE != "real" or not history_readings:
+        return []
+    # Clamp limit between 1 and length of history
+    limit = max(1, min(limit, len(history_readings)))
+    # Return the last `limit` entries
+    return history_readings[-limit:]
+
+@app.get("/actuators")
+def get_all_actuators():
+    """Return the current state of all actuators."""
+    return actuator_states
+
+@app.get("/actuators/{device}")
+def get_actuator(device: str):
+    """Return the state of a single actuator.
+
+    Raises 404 if the device name is unknown.
+    """
+    if device not in actuator_states:
+        raise HTTPException(status_code=404, detail="Unknown actuator")
+    return {device: actuator_states[device]}
+
+@app.post("/actuators/{device}")
+def set_actuator(device: str, state: dict):
+    """Update the state of a given actuator in real mode.
+
+    The request body should be a JSON object with a single `state` key
+    representing the desired new value. For example:
+
+    {
+      "state": "on"
+    }
+
+    or for actuators controlled by a percentage (0-100):
+
+    {
+      "state": 75
+    }
+
+    Returns the updated actuator state. Raises a 400 error if called in
+    demo mode or if the device name is unknown.
+    """
+    if MODE != "real":
+        raise HTTPException(status_code=400, detail="Can only control actuators in real mode")
+    if device not in actuator_states:
+        raise HTTPException(status_code=404, detail="Unknown actuator")
+    # Only update the state if the key 'state' is provided
+    if "state" not in state:
+        raise HTTPException(status_code=400, detail="Request body must include a 'state' field")
+    actuator_states[device] = state["state"]
+    return {device: actuator_states[device]}
 
