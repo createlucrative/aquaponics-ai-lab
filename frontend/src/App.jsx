@@ -41,6 +41,9 @@ function App() {
   const [actuators, setActuators] = useState(null);
   const [actuatorInputs, setActuatorInputs] = useState({});
 
+  // Plant health metrics (size and colour index) returned from /vision
+  const [plantHealth, setPlantHealth] = useState(null);
+
   // Helper: format sensor keys into human‑friendly labels with units
   const formatSensorLabel = (key) => {
     const labels = {
@@ -280,6 +283,69 @@ function App() {
     return () => clearInterval(histInterval);
   }, [activePage, mode]);
 
+  // Fetch plant health metrics when viewing the Monitoring page. Poll every
+  // 5 seconds to provide near real‑time updates. In demo mode the
+  // backend returns a plant size and colour index based on the selected
+  // plant; in real mode these values will come from a camera system via
+  // the backend. When leaving the monitoring page the interval is cleared.
+  useEffect(() => {
+    if (activePage !== 'monitoring') return;
+    const fetchHealth = () => {
+      let url = 'https://aquaponics-ai-lab.onrender.com/vision';
+      if (mode === 'demo' && selectedPlant) {
+        url += `?plant=${encodeURIComponent(selectedPlant)}`;
+      }
+      fetch(url)
+        .then((res) => res.json())
+        .then((data) => setPlantHealth(data))
+        .catch((error) => console.error('Error fetching plant health:', error));
+    };
+    fetchHealth();
+    const intervalId = setInterval(fetchHealth, 5000);
+    return () => clearInterval(intervalId);
+  }, [activePage, mode, selectedPlant]);
+
+  // Draw simple line charts when sensor history data changes. This effect
+  // runs only on the History page in real mode. For each sensor key
+  // available in the history entries it draws a line connecting
+  // successive values. Missing values are skipped. The charts are
+  // rendered on <canvas> elements identified by `chart-${key}`.
+  useEffect(() => {
+    if (activePage !== 'history' || mode !== 'real') return;
+    if (!sensorHistory || sensorHistory.length === 0) return;
+    const entries = sensorHistory;
+    const keys = Object.keys(entries[0].readings);
+    keys.forEach((key) => {
+      const canvas = document.getElementById(`chart-${key}`);
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const width = canvas.width;
+      const height = canvas.height;
+      ctx.clearRect(0, 0, width, height);
+      const values = entries.map((e) => e.readings[key]);
+      const filtered = values.filter((v) => v !== null && v !== undefined);
+      if (filtered.length === 0) return;
+      const minVal = Math.min(...filtered);
+      const maxVal = Math.max(...filtered);
+      const scaleY = (val) => {
+        if (maxVal === minVal) return height / 2;
+        return height - ((val - minVal) / (maxVal - minVal)) * (height - 20) - 10;
+      };
+      const stepX = values.length > 1 ? width / (values.length - 1) : 0;
+      ctx.beginPath();
+      ctx.strokeStyle = '#0074D9';
+      ctx.lineWidth = 2;
+      values.forEach((val, idx) => {
+        if (val === null || val === undefined) return;
+        const x = stepX * idx;
+        const y = scaleY(val);
+        if (idx === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    });
+  }, [sensorHistory, activePage, mode]);
+
   // Fetch actuator states when the Actuators page is entered. Also
   // initialize actuatorInputs with current states so that inputs reflect
   // existing values.
@@ -445,6 +511,9 @@ function App() {
         </button>{' '}
         <button onClick={() => handlePageChange('actuators')} disabled={activePage === 'actuators'}>
           Actuators
+        </button>{' '}
+        <button onClick={() => handlePageChange('monitoring')} disabled={activePage === 'monitoring'}>
+          Monitoring
         </button>
       </nav>
 
@@ -643,6 +712,24 @@ function App() {
           ) : (
             <p>No history data available.</p>
           )}
+
+          {/* Draw simple line charts for each sensor in real mode */}
+          {mode === 'real' && sensorHistory && sensorHistory.length > 0 && (
+            <div>
+              <h3>Trends</h3>
+              {Object.keys(sensorHistory[0].readings).map((key) => (
+                <div key={key} style={{ marginBottom: '20px' }}>
+                  <strong>{formatSensorLabel(key)}</strong>
+                  <canvas
+                    id={`chart-${key}`}
+                    width="400"
+                    height="200"
+                    style={{ border: '1px solid #ccc' }}
+                  ></canvas>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -672,6 +759,29 @@ function App() {
             </div>
           ) : (
             <p>Loading actuator states...</p>
+          )}
+        </div>
+      )}
+
+      {/* Plant monitoring view */}
+      {activePage === 'monitoring' && (
+        <div>
+          <h2>Plant Monitoring</h2>
+          {plantHealth ? (
+            <div>
+              <p>
+                Plant Size: {plantHealth.plant_size_cm !== null && plantHealth.plant_size_cm !== undefined
+                  ? plantHealth.plant_size_cm + ' cm'
+                  : 'N/A'}
+              </p>
+              <p>
+                Color Index: {plantHealth.plant_color_index !== null && plantHealth.plant_color_index !== undefined
+                  ? plantHealth.plant_color_index
+                  : 'N/A'}
+              </p>
+            </div>
+          ) : (
+            <p>Loading plant health...</p>
           )}
         </div>
       )}
