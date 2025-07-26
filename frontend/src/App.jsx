@@ -72,12 +72,57 @@ function App() {
     ],
   };
 
+  // Define acceptable ranges for each sensor. These values represent
+  // reasonable default thresholds for demo purposes. When integrating
+  // physical hardware, these can be adjusted or loaded from a database.
+  const sensorThresholds = {
+    co2_ppm: [300, 1200],
+    air_temp_celsius: [15, 30],
+    humidity_percent: [40, 80],
+    light_intensity_lux: [200, 800],
+    pH: [6.0, 8.0],
+    water_temp_celsius: [15, 30],
+    water_flow_rate_lpm: [0.5, 5],
+    audio_frequency_hz: [20, 20000],
+    audio_decibels_db: [30, 70],
+    light_cycle_hours: [6, 18],
+    light_brightness_percent: [10, 90],
+    light_pulse_freq_hz: [0, 1000],
+  };
+
   // Helper: format AI recommendation keys to human‑readable form
   const formatRecLabel = (key) => {
     return key
       .replace(/_/g, ' ')
       .replace(/\b\w/g, (l) => l.toUpperCase());
   };
+
+  // Compute alert messages based on sensor readings and thresholds. If a
+  // sensor value falls outside of its defined range, an alert message is
+  // added. This function is re-evaluated on each render to ensure that
+  // alerts reflect the most recent data.
+  const computeAlerts = () => {
+    const messages = [];
+    if (!sensors) return messages;
+    Object.entries(sensors).forEach(([key, value]) => {
+      if (value === null || value === undefined) return;
+      const range = sensorThresholds[key];
+      if (range) {
+        const [min, max] = range;
+        if (value < min || value > max) {
+          messages.push(
+            `${formatSensorLabel(key)} is out of range (optimal ${min}–${max}): ${value}`
+          );
+        }
+      }
+    });
+    return messages;
+  };
+
+  // Evaluate alerts on each render. Alerts will be an array of strings
+  // describing sensors that are out of their optimal range. When no
+  // sensors are out of range, the array will be empty.
+  const alerts = computeAlerts();
 
   // Fetch the current mode, list of plants, and initial data on mount
   useEffect(() => {
@@ -146,7 +191,6 @@ function App() {
         }
       })
       .catch((err) => console.error('Error fetching plant list:', err));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
   // Toggle between demo and real modes
@@ -256,6 +300,19 @@ function App() {
               </button>
             </span>
           </div>
+
+          {/* Alerts when sensors are out of range */}
+          {alerts.length > 0 && (
+            <div style={{ marginBottom: '10px' }}>
+              <h3 style={{ color: 'red' }}>Alerts</h3>
+              <ul>
+                {alerts.map((msg, idx) => (
+                  <li key={idx} style={{ color: 'red' }}>{msg}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {/* Sensor data */}
           <h3>Sensor Data</h3>
           {sensors ? (
