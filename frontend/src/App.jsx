@@ -29,6 +29,18 @@ function App() {
   // Comparison data for traditional vs aquaponics
   const [comparison, setComparison] = useState(null);
 
+  // Sensor history entries (for real mode). Each entry includes a timestamp
+  // and a dictionary of sensor readings. Only populated when the History page
+  // is active and mode is real.
+  const [sensorHistory, setSensorHistory] = useState([]);
+
+  // Actuator states and user inputs for controlling devices. When visiting
+  // the Actuators page, the app fetches the current state of all actuators
+  // and allows the user to update them. actuatorInputs holds the temporary
+  // values entered by the user before sending them to the backend.
+  const [actuators, setActuators] = useState(null);
+  const [actuatorInputs, setActuatorInputs] = useState({});
+
   // Helper: format sensor keys into human‑friendly labels with units
   const formatSensorLabel = (key) => {
     const labels = {
@@ -223,6 +235,89 @@ function App() {
     setNewPlantName(event.target.value);
   };
 
+  // Helper to fetch sensors and AI recommendations. Used initially and by
+  // the periodic polling interval. Constructs the sensor endpoint
+  // differently depending on mode and selected plant.
+  const fetchSensorsAndAi = () => {
+    let sensorUrl = 'https://aquaponics-ai-lab.onrender.com/sensors';
+    if (mode === 'demo' && selectedPlant) {
+      sensorUrl += `?plant=${encodeURIComponent(selectedPlant)}`;
+    }
+    fetch(sensorUrl)
+      .then((res) => res.json())
+      .then((data) => setSensors(data))
+      .catch((error) => console.error('Error fetching sensors:', error));
+    fetch('https://aquaponics-ai-lab.onrender.com/ai')
+      .then((res) => res.json())
+      .then((data) => setAi(data))
+      .catch((error) => console.error('Error fetching AI recommendations:', error));
+  };
+
+  // Poll sensors and AI every 5 seconds when on dashboard. The interval
+  // clears on component unmount or when dependencies change. This
+  // complements the initial fetch done in other effects.
+  useEffect(() => {
+    // Only poll on dashboard
+    if (activePage !== 'dashboard') return;
+    const intervalId = setInterval(() => {
+      fetchSensorsAndAi();
+    }, 5000);
+    return () => clearInterval(intervalId);
+  }, [activePage, mode, selectedPlant]);
+
+  // Fetch sensor history when on the History page in real mode. Poll
+  // every 10 seconds to update the history table with new entries.
+  useEffect(() => {
+    if (activePage !== 'history' || mode !== 'real') return;
+    const fetchHistory = () => {
+      fetch('https://aquaponics-ai-lab.onrender.com/sensors/history?limit=50')
+        .then((res) => res.json())
+        .then((data) => setSensorHistory(data))
+        .catch((error) => console.error('Error fetching sensor history:', error));
+    };
+    fetchHistory();
+    const histInterval = setInterval(fetchHistory, 10000);
+    return () => clearInterval(histInterval);
+  }, [activePage, mode]);
+
+  // Fetch actuator states when the Actuators page is entered. Also
+  // initialize actuatorInputs with current states so that inputs reflect
+  // existing values.
+  useEffect(() => {
+    if (activePage !== 'actuators') return;
+    fetch('https://aquaponics-ai-lab.onrender.com/actuators')
+      .then((res) => res.json())
+      .then((data) => {
+        setActuators(data);
+        setActuatorInputs(data);
+      })
+      .catch((error) => console.error('Error fetching actuators:', error));
+  }, [activePage]);
+
+  // Handle changing an actuator input value. Since inputs can be string or
+  // number, do not coerce type here; the value will be sent as-is.
+  const handleActuatorInputChange = (device, value) => {
+    setActuatorInputs((prev) => ({ ...prev, [device]: value }));
+  };
+
+  // Send updated actuator state to backend. Only allowed in real mode.
+  const handleUpdateActuator = async (device) => {
+    try {
+      await fetch(`https://aquaponics-ai-lab.onrender.com/actuators/${encodeURIComponent(device)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ state: actuatorInputs[device] }),
+      });
+      // Refresh actuator states after update
+      const res = await fetch('https://aquaponics-ai-lab.onrender.com/actuators');
+      const data = await res.json();
+      setActuators(data);
+      setActuatorInputs(data);
+    } catch (error) {
+      console.error('Error updating actuator:', error);
+    }
+  };
+
   // Save manual plant entry (only in real mode). Posts empty recipe to backend
   const handleAddPlant = async () => {
     const plantName = newPlantName.trim();
@@ -276,6 +371,12 @@ function App() {
         </button>{' '}
         <button onClick={() => handlePageChange('traditional')} disabled={activePage === 'traditional'}>
           Traditional vs Aquaponics
+        </button>{' '}
+        <button onClick={() => handlePageChange('history')} disabled={activePage === 'history'}>
+          History
+        </button>{' '}
+        <button onClick={() => handlePageChange('actuators')} disabled={activePage === 'actuators'}>
+          Actuators
         </button>
       </nav>
 
@@ -440,6 +541,69 @@ function App() {
             </table>
           ) : (
             <p>Loading comparison data...</p>
+          )}
+        </div>
+      )}
+
+      {/* Sensor history view */}
+      {activePage === 'history' && (
+        <div>
+          <h2>Sensor History</h2>
+          {mode !== 'real' ? (
+            <p>History is only available in real mode.</p>
+          ) : sensorHistory && sensorHistory.length > 0 ? (
+            <table border="1" cellPadding="5" style={{ borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th>Timestamp (UTC)</th>
+                  {Object.keys(sensorHistory[0].readings).map((key) => (
+                    <th key={key}>{formatSensorLabel(key)}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sensorHistory.map((entry, idx) => (
+                  <tr key={idx}>
+                    <td>{new Date(entry.timestamp).toLocaleString()}</td>
+                    {Object.keys(sensorHistory[0].readings).map((key) => (
+                      <td key={key}>{entry.readings[key] !== undefined && entry.readings[key] !== null ? entry.readings[key] : 'N/A'}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p>No history data available.</p>
+          )}
+        </div>
+      )}
+
+      {/* Actuator control view */}
+      {activePage === 'actuators' && (
+        <div>
+          <h2>Actuator Control</h2>
+          {mode !== 'real' ? (
+            <p>Actuator control is only available in real mode.</p>
+          ) : actuators ? (
+            <div>
+              {Object.entries(actuators).map(([device, state]) => (
+                <div key={device} style={{ marginBottom: '10px' }}>
+                  <strong>{device}</strong>{' '}
+                  <input
+                    type="text"
+                    value={actuatorInputs[device] !== undefined ? actuatorInputs[device] : ''}
+                    onChange={(e) => handleActuatorInputChange(device, e.target.value)}
+                    style={{ marginRight: '5px' }}
+                  />
+                  <button onClick={() => handleUpdateActuator(device)}>
+                    Set
+                  </button>
+                  <span style={{ marginLeft: '10px' }}>Current: {state !== undefined ? state.toString() : 'N/A'}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p>Loading actuator states...</p>
           )}
         </div>
       )}
