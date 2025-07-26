@@ -1,4 +1,7 @@
 from fastapi import FastAPI, HTTPException, Response
+from fastapi.responses import StreamingResponse
+import asyncio
+import json
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import random
@@ -303,6 +306,72 @@ actuator_states: dict[str, any] = {
     "cameras": "off",
 }
 
+# Target configuration used for automatic optimisation in real mode. When
+# optimisation is enabled, the backend will compare incoming sensor
+# readings against this target and adjust actuators accordingly. The
+# default target is initialised to the optimal config of the first
+# demo recipe (e.g. Radish). The frontend can update this via the
+# /target-config endpoint by specifying a plant name.
+TARGET_CONFIG = demo_recipes[0]["optimal_config"].copy()
+
+def auto_adjust_actuators():
+    """Automatically adjust actuators based on the latest sensor readings and
+    target configuration.
+
+    This simple rule‑based controller compares each sensor value against
+    the corresponding target value in TARGET_CONFIG and sets actuator
+    states accordingly. It is invoked whenever new sensor readings are
+    ingested in real mode. If a reading or target is missing, the
+    actuator is not modified. You can refine these rules to implement
+    PID control or more advanced algorithms as needed.
+    """
+    # Only adjust in real mode
+    if MODE != "real":
+        return
+    # CO2 control: open valve if below target
+    co2_target = TARGET_CONFIG.get("co2_ppm")
+    co2_value = latest_readings.get("co2_ppm")
+    if co2_target is not None and co2_value is not None:
+        actuator_states["co2_valve"] = "on" if co2_value < co2_target else "off"
+    # Air temperature: use heaters and fans
+    temp_target = TARGET_CONFIG.get("air_temp_celsius")
+    temp_value = latest_readings.get("air_temp_celsius")
+    if temp_target is not None and temp_value is not None:
+        if temp_value < temp_target - 1:
+            actuator_states["heaters"] = "on"
+            actuator_states["fans"] = 0
+        elif temp_value > temp_target + 1:
+            actuator_states["heaters"] = "off"
+            actuator_states["fans"] = 50  # medium fan speed
+        else:
+            actuator_states["heaters"] = "off"
+            actuator_states["fans"] = 0
+    # Humidity: increase airflow if above target to reduce humidity
+    humidity_target = TARGET_CONFIG.get("humidity_percent")
+    humidity_value = latest_readings.get("humidity_percent")
+    if humidity_target is not None and humidity_value is not None:
+        if humidity_value > humidity_target + 5:
+            actuator_states["fans"] = max(actuator_states.get("fans", 0), 75)
+        elif humidity_value < humidity_target - 5:
+            # minimal fan usage; heaters could also impact humidity
+            actuator_states["fans"] = min(actuator_states.get("fans", 0), 25)
+    # Light intensity: set grow lights brightness
+    light_target = TARGET_CONFIG.get("light_brightness_percent")
+    if light_target is not None:
+        actuator_states["grow_lights"] = light_target
+    # Water flow: turn pump on if below target
+    flow_target = TARGET_CONFIG.get("water_flow_rate_lpm")
+    flow_value = latest_readings.get("water_flow_rate_lpm")
+    if flow_target is not None and flow_value is not None:
+        actuator_states["water_pump"] = "on" if flow_value < flow_target else "off"
+    # Audio: adjust audio transducers volume
+    audio_target = TARGET_CONFIG.get("audio_decibels_db")
+    if audio_target is not None:
+        actuator_states["audio_transducers"] = audio_target
+    # Light pulse frequency and cycle are not directly adjustable here but
+    # could be implemented similarly by controlling programmable drivers.
+
+
 # Define a simple Pydantic model for ingesting arbitrary sensor readings.
 # NOTE: Instead of using a Pydantic root model (which requires Pydantic v2's RootModel),
 # we accept sensor readings as a plain dictionary in the ingestion endpoint. This
@@ -411,8 +480,37 @@ def ingest_sensor_readings(readings: dict[str, float]):
 
 @app.get("/ai")
 def get_ai_recommendations():
-    """Provide AI-driven recommendations. In demo mode returns random suggestions; in real mode placeholders."""
+    """Provide AI-driven recommendations based on current readings and target values.
+
+    In demo mode the recommendations are random to simulate experimentation. In
+    real mode this function compares the latest sensor readings against the
+    TARGET_CONFIG and suggests whether to increase, decrease or maintain
+    each parameter. When a reading or target is missing, the suggestion
+    returns None.
+    """
+    # Helper to compare value against target and return action
+    def recommend(key: str, threshold: float = 0.05):
+        """Return 'increase', 'decrease' or 'maintain' based on deviation from target.
+
+        If the sensor reading is within +/- threshold (5%) of the target, the
+        recommendation is 'maintain'. Otherwise, recommend increasing or
+        decreasing the parameter accordingly. Returns None if either value
+        is unavailable.
+        """
+        target = TARGET_CONFIG.get(key)
+        value = latest_readings.get(key)
+        if target is None or value is None:
+            return None
+        # Avoid division by zero; treat threshold as absolute difference when target is zero
+        delta = abs(value - target)
+        # Determine acceptable range
+        acceptable = threshold * abs(target) if abs(target) > 0 else threshold
+        if delta <= acceptable:
+            return "maintain"
+        return "increase" if value < target else "decrease"
+
     if MODE == "demo":
+        # Random suggestions for demo mode to simulate experimentation
         return {
             "adjust_co2": random.choice(["increase", "decrease", "maintain"]),
             "adjust_air_temp": random.choice(["increase", "decrease", "maintain"]),
@@ -432,21 +530,61 @@ def get_ai_recommendations():
             "adjust_light_brightness": random.choice(["increase", "decrease", "maintain"]),
             "adjust_light_pulse_freq": random.choice(["increase frequency", "decrease frequency", "maintain"]),
         }
-    else:
-        return {
-            "adjust_co2": None,
-            "adjust_air_temp": None,
-            "adjust_humidity": None,
-            "adjust_light_intensity": None,
-            "adjust_pH": None,
-            "adjust_water_temp": None,
-            "adjust_water_flow_rate": None,
-            "adjust_audio_frequency": None,
-            "adjust_audio_decibels": None,
-            "adjust_light_cycle": None,
-            "adjust_light_brightness": None,
-            "adjust_light_pulse_freq": None,
+    # Real mode: compute recommendations based on deviations
+    return {
+        "adjust_co2": recommend("co2_ppm"),
+        "adjust_air_temp": recommend("air_temp_celsius"),
+        "adjust_humidity": recommend("humidity_percent"),
+        "adjust_light_intensity": recommend("light_intensity_lux"),
+        "adjust_pH": recommend("pH"),
+        "adjust_water_temp": recommend("water_temp_celsius"),
+        "adjust_water_flow_rate": recommend("water_flow_rate_lpm"),
+        "adjust_audio_frequency": recommend("audio_frequency_hz"),
+        "adjust_audio_decibels": recommend("audio_decibels_db"),
+        "adjust_light_cycle": recommend("light_cycle_hours"),
+        "adjust_light_brightness": recommend("light_brightness_percent"),
+        "adjust_light_pulse_freq": recommend("light_pulse_freq_hz"),
+    }
+
+@app.get("/stream/sensors")
+async def stream_sensors():
+    """Stream the latest sensor readings as server-sent events (SSE).
+
+    Clients can connect to this endpoint via EventSource to receive
+    near real-time updates without polling. The server sends the
+    current `latest_readings` dictionary every two seconds. In demo
+    mode the stream returns simulated random values similar to the
+    /sensors endpoint, while in real mode it streams the most recent
+    readings stored in `latest_readings`.
+    """
+    async def event_generator():
+        # Define ranges for random demo values
+        demo_ranges = {
+            "co2_ppm": (300, 800),
+            "air_temp_celsius": (18, 30),
+            "humidity_percent": (30, 70),
+            "light_intensity_lux": (200, 1000),
+            "pH": (6, 8),
+            "water_temp_celsius": (18, 28),
+            "water_flow_rate_lpm": (0.5, 5.0),
+            "audio_frequency_hz": (200, 2000),
+            "audio_decibels_db": (30, 90),
+            "light_cycle_hours": (8, 18),
+            "light_brightness_percent": (10, 100),
+            "light_pulse_freq_hz": (0.5, 5.0),
         }
+        while True:
+            if MODE == "demo":
+                # Generate random demo values for streaming
+                data = {k: round(random.uniform(a, b), 2) for k, (a, b) in demo_ranges.items()}
+            else:
+                # Return latest readings (may include None)
+                data = latest_readings.copy()
+            # Yield SSE formatted message
+            yield f"data: {json.dumps(data)}\n\n"
+            await asyncio.sleep(2)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @app.get("/plants")
 def get_plants():
@@ -460,6 +598,42 @@ def get_plants():
 def get_recipes():
     """Return all recipe records depending on the current mode."""
     return demo_recipes if MODE == "demo" else real_recipes
+
+@app.get("/target-config")
+def get_target_config():
+    """Return the current target configuration used for automatic optimisation.
+
+    The target configuration defines the desired sensor values for the
+    optimisation loop in real mode. It is initialised to the optimal
+    configuration of the first demo recipe (Radish) but can be updated
+    via the POST /target-config endpoint. The returned dictionary maps
+    sensor keys to their target values.
+    """
+    return TARGET_CONFIG
+
+class TargetConfigRequest(BaseModel):
+    plant: str
+
+@app.post("/target-config")
+def set_target_config(req: TargetConfigRequest):
+    """Update the target configuration based on a plant name.
+
+    Accepts a JSON body with a `plant` field specifying the name of a
+    plant. The backend searches the demo_recipes (and real_recipes if
+    in real mode) for a matching plant and updates TARGET_CONFIG to its
+    optimal configuration. If no matching recipe is found, a 404 error
+    is raised. Returns the updated target configuration.
+    """
+    plant_name = req.plant.strip().lower()
+    # Search in demo recipes (always available) and real recipes if in real mode
+    all_recipes = demo_recipes + real_recipes
+    match = next((r for r in all_recipes if r["plant"].lower() == plant_name), None)
+    if not match:
+        raise HTTPException(status_code=404, detail="Plant not found in recipe database")
+    # Update TARGET_CONFIG by copying the matching optimal config
+    TARGET_CONFIG.clear()
+    TARGET_CONFIG.update(match["optimal_config"])
+    return TARGET_CONFIG
 
 @app.post("/recipes")
 def add_recipe(recipe: Recipe):
