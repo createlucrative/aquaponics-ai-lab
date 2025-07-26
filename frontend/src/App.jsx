@@ -48,6 +48,30 @@ function App() {
     return labels[key] || key;
   };
 
+  // Group sensors into categories for more structured display on the dashboard.
+  // Environmental sensors measure conditions like air quality and light,
+  // whereas aquatic sensors measure water quality. If additional sensors are
+  // added in the backend, extend these arrays accordingly. Keys not found in
+  // these arrays will still be displayed individually.
+  const sensorCategories = {
+    Environmental: [
+      'co2_ppm',
+      'air_temp_celsius',
+      'humidity_percent',
+      'light_intensity_lux',
+      'light_cycle_hours',
+      'light_brightness_percent',
+      'light_pulse_freq_hz',
+      'audio_frequency_hz',
+      'audio_decibels_db',
+    ],
+    Aquatic: [
+      'water_temp_celsius',
+      'pH',
+      'water_flow_rate_lpm',
+    ],
+  };
+
   // Helper: format AI recommendation keys to human‑readable form
   const formatRecLabel = (key) => {
     return key
@@ -235,11 +259,37 @@ function App() {
           {/* Sensor data */}
           <h3>Sensor Data</h3>
           {sensors ? (
-            <ul>
-              {Object.entries(sensors).map(([key, value]) => (
-                <li key={key}>{formatSensorLabel(key)}: {value !== null ? value.toString() : 'N/A'}</li>
+            <>
+              {/* Iterate through defined categories and display grouped sensors */}
+              {Object.entries(sensorCategories).map(([category, keys]) => (
+                <div key={category} style={{ marginBottom: '10px' }}>
+                  <h4>{category} Sensors</h4>
+                  <ul>
+                    {keys.map((key) => (
+                      <li key={key}>
+                        {formatSensorLabel(key)}: {sensors[key] !== null && sensors[key] !== undefined ? sensors[key] : 'N/A'}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               ))}
-            </ul>
+              {/* Display any additional sensors not covered by the defined categories */}
+              {Object.entries(sensors)
+                .filter(([key]) =>
+                  !sensorCategories.Environmental.includes(key) &&
+                  !sensorCategories.Aquatic.includes(key)
+                )
+                .map(([key, value]) => (
+                  <div key={key} style={{ marginBottom: '10px' }}>
+                    <h4>Other Sensors</h4>
+                    <ul>
+                      <li>
+                        {formatSensorLabel(key)}: {value !== null && value !== undefined ? value : 'N/A'}
+                      </li>
+                    </ul>
+                  </div>
+                ))}
+            </>
           ) : (
             <p>Loading sensor data...</p>
           )}
